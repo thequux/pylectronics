@@ -2,169 +2,158 @@
 Implementation of the several logic gates we can use to build the world.
 """
 from abc import ABCMeta, abstractmethod
-from src.transistors import PNPTransistor, NPNTransistor
+from src.core import Wire, Component
+from src.transistors import NChanTransistor, PChanTransistor
 
 
-class _BaseLogicGate(metaclass=ABCMeta):
+class _BaseLogicGate(Component):
     """
     Base class for all Logic Gates.
     """
 
+    inputs: List[Wire]
+    output: Wire
+    transistors: List[Component]
+    internal_wires: List[Wire]
+    
     def __init__(self) -> None:
         """
         Constructor.
         """
-        self.input_1 = False
-        self.input_2 = False
+        self.inputs = []
+        self.output = Wire()
 
-    @property
-    @abstractmethod
-    def output(self) -> bool:
-        """
-        Get the state of the logic gate.
-        """
-        raise NotImplementedError()
+    def components(self):
+        return self.transistors
 
-    @abstractmethod
-    def _map_connections(self) -> None:
-        """
-        Map the connections between the internal components (either transistors or other logic gates).
-        """
-        raise NotImplementedError()
+    def own_wires(self):
+        yield from self.inputs
+        yield from self.internal_wires
 
-    def set_inputs(self, value_1: bool, value_2: bool) -> bool:
-        """
-        Set the inputs of the gate.
-        """
-        self.input_1 = value_1
-        self.input_2 = value_2
+    def add_input(self, *inputs: List[Wire]):
+        self.inputs.extend(inputs)
 
-        self._map_connections()
-
-        return self.output
-
-
-class Inverter:
+        
+class Inverter(Component):
     """
     Implementation of an Inverter (NOT Gate).
     """
 
+    input: Wire
+    output: Wire
+
     def __init__(self) -> None:
         """
         Constructor.
         """
-        self.transistor = NPNTransistor()
+        self.ntran = NChanTransistor()
+        self.ptran = PChanTransistor()
 
-        self.input = False
+        self.input = Wire()
+        self.output = Wire()
 
-        self.transistor.set_base(value=True)
+    def elaborate(self):
+        self.ntran.source = Rail.GROUND
+        self.ptran.source = Rail.VCC
 
-    @property
-    def output(self) -> bool:
-        """
-        Please refer to the interface documentation.
-        """
-        return self.transistor.set_emitter(value=self.input)
+        self.ntran.gate = self.ptran.gate = self.input
+        self.ntran.drain = self.output.connection()
+        self.ptran.gate = self.output.connection()
+        
+        self.ntran.elaborate()
+        self.ptran.elaborate()
+        
+    def subcomponents(self):
+        yield self.ntran
+        yield self.ptran
 
-    def set_input(self, value: bool) -> bool:
-        """
-        Set the input of the gate.
-        """
-        self.input = value
-        return self.output
+    def own_wires(self):
+        yield self.input
 
-
-class AndGate(_BaseLogicGate):
+class NandGate(_BaseLogicGate):
     """
     Implementation of an AND Gate using 2 transistors in series.
     """
 
-    def __init__(self) -> None:
-        """
-        Constructor.
-        """
-        super().__init__()
+    def elaborate(self):
+        nchain = None
+        for input in self.inputs():
+            ptran = PChanTransistor()
+            ptran.source = Rail.VCC
+            ptran.gate = input
+            ptran.drain = self.output
+            self.transistors.append(ptran)
 
-        self.transistor_1 = PNPTransistor()
-        self.transistor_2 = PNPTransistor()
+            ntran = NChanTransistor()
+            if nchain is not None:
+                wire = nchain.drain = ntran.source = Wire()
+                self.internal_wires.append(wire)
+            else:
+                ntran.source = Rail.GROUND
+            ntran.gate = input
+            nchain = ntran
+            self.transistors.append(ntran)
+        nchain.drain = output
 
-        self.transistor_1.set_base(value=True)
+        for tr in self.transistors:
+            tr.elaborate()
 
-    @property
-    def output(self) -> bool:
-        """
-        Please refer to the interface documentation.
-        """
-        return self.transistor_1.in_series_with(transistors=self.transistor_2)
-
-    def _map_connections(self) -> None:
-        """
-        Please refer to the interface documentation.
-        """
-        self.transistor_1.set_emitter(value=self.input_1)
-        self.transistor_2.set_emitter(value=self.input_2)
-
-
-class OrGate(_BaseLogicGate):
+    
+class NORGate(_BaseLogicGate):
     """
     Implementation of an OR Gate using 2 transistors in parallel.
     """
 
-    def __init__(self) -> None:
-        """Constructor."""
-        super().__init__()
+        pchain = None
+        for input in self.inputs():
+            ntran = PChanTransistor()
+            ntran.source = Rail.GROUND
+            ntran.gate = input
+            ntran.drain = self.output
+            self.transistors.append(ntran)
 
-        self.transistor_1 = PNPTransistor()
-        self.transistor_2 = PNPTransistor()
+            ptran = NChanTransistor()
+            if pchain is not None:
+                wire = pchain.drain = ptran.source = Wire()
+                self.internal_wires.append(wire)
+            else:
+                ptran.source = Rail.VCC
+            ptran.gate = input
+            pchain = ptran
+            self.transistors.append(ptran)
+        pchain.drain = output
 
-        self.transistor_1.set_base(value=True)
-        self.transistor_2.set_base(value=True)
-
-    @property
-    def output(self) -> bool:
-        """
-        Please refer to the interface documentation.
-        """
-        return self.transistor_1.in_parallel_with(transistors=self.transistor_2)
-
-    def _map_connections(self) -> None:
-        """
-        Please refer to the interface documentation.
-        """
-        self.transistor_1.set_emitter(value=self.input_1)
-        self.transistor_2.set_emitter(value=self.input_2)
+        for tr in self.transistors:
+            tr.elaborate()
 
 
-class NANDGate(_BaseLogicGate):
+class AndGate(_BaseLogicGate):
     """
-    Implementation of a NAND Gate using an AND Gate and an Inverter.
+    Implementation of a AND Gate using an NAND Gate and an Inverter.
     """
 
     def __init__(self) -> None:
         """Constructor."""
         super().__init__()
 
-        self.and_gate = AndGate()
+        self.nand_gate = NANDGate()
         self.inverter = Inverter()
 
-    @property
-    def output(self) -> bool:
-        """
-        Please refer to the interface documentation.
-        """
-        return self.inverter.output
+    def elaborate(self):
+        self.inverter.output = self.output
+        self.nand_gate.add_input(*self.inputs)
+        self.inverter.input = self.nand_gate.output
+        self.inverter.elaborate()
+        self.nand_gate.elaborate()
 
-    def _map_connections(self) -> None:
-        """
-        Please refer to the interface documentation.
-        """
-        and_result = self.and_gate.set_inputs(value_1=self.input_1, value_2=self.input_2)
-        self.inverter.set_input(value=and_result)
+    def subcomponents(self):
+        yield self.inverter
+        yield self.nand_gate
 
-
-class NORGate(_BaseLogicGate):
+        
+class OrGate(_BaseLogicGate):
     """
-    Implementation of a NOR Gate using an OR Gate and an Inverter.
+    Implementation of an Or Gate using an NOR Gate and an Inverter.
     """
 
     def __init__(self) -> None:
@@ -173,22 +162,19 @@ class NORGate(_BaseLogicGate):
         """
         super().__init__()
 
-        self.or_gate = OrGate()
+        self.nor_gate = NORGate()
         self.inverter = Inverter()
 
-    @property
-    def output(self) -> bool:
-        """
-        Please refer to the interface documentation.
-        """
-        return self.inverter.output
+    def elaborate(self):
+        self.inverter.output = self.output
+        self.nor_gate.add_input(*self.inputs)
+        self.inverter.input = self.nor_gate.output
+        self.inverter.elaborate()
+        self.nor_gate.elaborate()
 
-    def _map_connections(self) -> None:
-        """
-        Please refer to the interface documentation.
-        """
-        or_result = self.or_gate.set_inputs(value_1=self.input_1, value_2=self.input_2)
-        self.inverter.set_input(value=or_result)
+    def subcomponents(self):
+        yield self.inverter
+        yield self.nor_gate
 
 
 class XORGate(_BaseLogicGate):
@@ -206,25 +192,25 @@ class XORGate(_BaseLogicGate):
         self.or_gate = OrGate()
         self.nand_gate = NANDGate()
 
-    @property
-    def output(self) -> bool:
-        """
-        Please refer to the interface documentation.
-        """
-        return self.and_gate.output
+    def elaborate(self):
+        assert len(self.inputs) == 2
+        self.or_gate.add_input(*self.inputs)
+        self.nand_gate.add_input(*self.inputs)
+        self.and_gate.add_input(self.or_gate.output, self.nand_gate.output)
 
-    def _map_connections(self) -> None:
-        """
-        Please refer to the interface documentation.
-        """
-        or_result = self.or_gate.set_inputs(value_1=self.input_1, value_2=self.input_2)
-        nand_result = self.nand_gate.set_inputs(value_1=self.input_1, value_2=self.input_2)
-        self.and_gate.set_inputs(value_1=or_result, value_2=nand_result)
+        self.or_gate.elaborate()
+        self.nand_gate.elaborate()
+        self.and_gate.elaborate()
+
+    def subcomponents(self):
+        yield self.or_gate
+        yield self.nand_gate
+        yield self.and_gate
 
 
 class XNORGate(_BaseLogicGate):
     """
-    Implementation of a XNOR Gate using a XNOR Gate and an Inverter.
+    Implementation of a XNOR Gate using a XOR Gate and an Inverter.
     """
 
     def __init__(self) -> None:
@@ -236,16 +222,13 @@ class XNORGate(_BaseLogicGate):
         self.xor_gate = XORGate()
         self.inverter = Inverter()
 
-    @property
-    def output(self) -> bool:
-        """
-        Please refer to the interface documentation.
-        """
-        return self.inverter.output
+    def elaborate(self):
+        self.inverter.output = self.output
+        self.xor_gate.add_input(*self.inputs)
+        self.inverter.input = self.xor_gate.output
+        self.inverter.elaborate()
+        self.xor_gate.elaborate()
 
-    def _map_connections(self) -> None:
-        """
-        Please refer to the interface documentation.
-        """
-        xor_result = self.xor_gate.set_inputs(value_1=self.input_1, value_2=self.input_2)
-        self.inverter.set_input(value=xor_result)
+    def subcomponents(self):
+        yield self.inverter
+        yield self.xor_gate
